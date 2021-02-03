@@ -1,0 +1,113 @@
+#!/usr/bin/env python
+# vim:fileencoding=utf-8
+import codecs
+import os
+import re
+
+from bs4 import BeautifulSoup
+from calibre.web.feeds.news import AutomaticNewsRecipe
+
+class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
+    GIST_NETLOC = 'gist.github.com'
+    GIST_BLOB_NUM = 'blob-num'
+    GIST_BLOB_CODE = 'blob-code'
+    GIST_META = 'gist-meta'
+    MAX_DESC_LEN = 100
+    REGEX_DOCWRITE = re.compile(br"document.write\('(.+)'\)")
+    # The auto cleanup remove useful parts, and the Github Gist, even with
+    # auto_cleanup_keep = '//div[@class="col"]'
+    auto_cleanup            = False
+    feeds                   = [
+        (
+            'Zero Day Initiative Blog',
+            'https://www.zerodayinitiative.com/blog/?format=rss'
+        ),
+    ]
+    max_articles_per_feed  = 109
+    oldest_article         = 365
+    title                  = 'Zero Day Initiative'
+
+    def parse_index(self):
+        indexes = []
+        for title, feed in self.feeds:
+            articles = []
+            _raw = self.browser.open(feed).read()
+            # with open('test-recipe.xml', 'wb') as out:
+            #     out.write(_raw)
+            soup = BeautifulSoup(_raw, 'lxml-xml')
+            for idx, item in enumerate(soup.find_all('item')):
+                if idx > self.max_articles_per_feed:
+                    break
+                try:
+                    description = item.find('description').text
+                    desc_soup = BeautifulSoup(description, 'html.parser')
+                    try:
+                        description = desc_soup.p.text
+                    except AttributeError:
+                        pass
+                    if len(description) > self.MAX_DESC_LEN:
+                        description = description[:self.MAX_DESC_LEN - 3]
+                        description += '...'
+                    articles.append({
+                        'author': item.find('dc:creator').text,
+                        'title': item.find('title').text,
+                        'url': item.find('link').text,
+                        'date': item.find('pubDate').text,
+                        'description': description,
+                        'content': '',
+                    })
+                except AttributeError:
+                    self.log.warn(f'Could not load article from {feed}')
+            indexes.append((title, articles))
+        return indexes
+
+    def process_gist(self, script):
+        gist_data = self.browser.open(script['src']).read()
+        new_content = ''
+        for match in self.REGEX_DOCWRITE.finditer(gist_data):
+            new_content += codecs.decode(
+                match.group(1).replace(b'\\/', b'/'), 'unicode-escape')
+        soup = BeautifulSoup(new_content, 'html.parser')
+        lines = []
+        last_line = 0
+        for trow in soup.find_all('tr'):
+            tdiv_line = trow.find('td', class_=self.GIST_BLOB_NUM)
+            tdiv_code = trow.find('td', class_=self.GIST_BLOB_CODE)
+            lines.append((tdiv_line['data-line-number'], tdiv_code.text))
+            last_line = tdiv_line['data-line-number']
+        gist = ['<pre style="font-size: 80%;">']
+        for line, code in lines:
+            gist.append('{1:>{0}}: {2}'.format(len(last_line) + 1, line, code))
+        gist.append('</pre>')
+        gist_soup = BeautifulSoup(os.linesep.join(gist), 'html.parser')
+        meta = soup.find('div', class_=self.GIST_META)
+        try:
+            gist_soup.append(meta)
+        except ValueError:
+            pass
+        return gist_soup
+
+    def preprocess_html(self, soup):
+        new_content = soup.find('div', class_='col')
+        for script in new_content.find_all('script'):
+            if self.GIST_NETLOC in script['src']:
+                gist = self.process_gist(script)
+                node = script
+                while True:
+                    if node.parent.text != '':
+                        break
+                    print(f'{node.parent} is empty, removing')
+                    node = node.parent
+                node.replace_with(gist)
+        body = soup.find('body')
+        body.clear()
+        del body['class']
+        del body['id']
+        for script in (soup.find_all('script') + soup.find_all('link') +
+                       soup.find_all('meta')):
+            script.extract()
+        body.append(new_content)
+        # with open(f'test-{self.count}.html', 'w') as out:
+        #     out.write(str(soup))
+        # self.count += 1
+        return soup

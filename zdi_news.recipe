@@ -32,8 +32,6 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
         for title, feed in self.feeds:
             articles = []
             _raw = self.browser.open(feed).read()
-            # with open('test-recipe.xml', 'wb') as out:
-            #     out.write(_raw)
             soup = BeautifulSoup(_raw, 'lxml-xml')
             for idx, item in enumerate(soup.find_all('item')):
                 if idx > self.max_articles_per_feed:
@@ -87,9 +85,8 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
             pass
         return gist_soup
 
-    def preprocess_html(self, soup):
-        new_content = soup.find('div', class_='col')
-        for script in new_content.find_all('script'):
+    def process_gists(self):
+        for script in self._content.find_all('script'):
             if self.GIST_NETLOC in script['src']:
                 gist = self.process_gist(script)
                 node = script
@@ -99,6 +96,19 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
                     print(f'{node.parent} is empty, removing')
                     node = node.parent
                 node.replace_with(gist)
+
+    def process_button_images(self):
+        for button in self._content.find_all('button'):
+            img = button.find('img')
+            if img:
+                button.replace_with(img)
+            else:
+                button.decompose()
+
+    def preprocess_html(self, soup):
+        self._content = soup.find('div', class_='col')
+        self.process_gists()
+        self.process_button_images()
         body = soup.find('body')
         body.clear()
         del body['class']
@@ -106,8 +116,5 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
         for script in (soup.find_all('script') + soup.find_all('link') +
                        soup.find_all('meta')):
             script.extract()
-        body.append(new_content)
-        # with open(f'test-{self.count}.html', 'w') as out:
-        #     out.write(str(soup))
-        # self.count += 1
+        body.append(self._content)
         return soup

@@ -12,7 +12,6 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
     GIST_BLOB_NUM = 'blob-num'
     GIST_BLOB_CODE = 'blob-code'
     GIST_META = 'gist-meta'
-    MAX_DESC_LEN = 100
     REGEX_DOCWRITE = re.compile(br"document.write\('(.+)'\)")
     # The auto cleanup remove useful parts, and the Github Gist, even with
     # auto_cleanup_keep = '//div[@class="col"]'
@@ -23,8 +22,7 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
             'https://www.zerodayinitiative.com/blog/?format=rss'
         ),
     ]
-    max_articles_per_feed  = 109
-    oldest_article         = 365
+    oldest_article         = 356
     title                  = 'Zero Day Initiative'
 
     def parse_index(self):
@@ -34,8 +32,6 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
             _raw = self.browser.open(feed).read()
             soup = BeautifulSoup(_raw, 'lxml-xml')
             for idx, item in enumerate(soup.find_all('item')):
-                if idx > self.max_articles_per_feed:
-                    break
                 try:
                     description = item.find('description').text
                     desc_soup = BeautifulSoup(description, 'html.parser')
@@ -43,8 +39,8 @@ class ZeroDayInitiativeNewsRecipe(AutomaticNewsRecipe):
                         description = desc_soup.p.text
                     except AttributeError:
                         pass
-                    if len(description) > self.MAX_DESC_LEN:
-                        description = description[:self.MAX_DESC_LEN - 3]
+                    if len(description) > self.summary_length:
+                        description = description[:self.summary_length - 3]
                         description += '...'
                     articles.append({
                         'author': item.find('dc:creator').text,
